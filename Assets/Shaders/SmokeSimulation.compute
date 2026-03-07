@@ -1,0 +1,83 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel SimulateSmoke
+
+// Create a RenderTexture with enableRandomWrite flag and set it with cs.SetTexture
+RWTexture3D<float> _Write;
+Texture3D<float>   _Read;
+SamplerState       sampler_Read;
+
+// Simulation params
+float3 _GridSize;        // voxel dimensions (e.g. 64,64,64)
+float  _DeltaTime;
+float  _Dissipation;     // how fast density fades (0.99 = slow, 0.95 = fast)
+float  _EmitRate;        // density injected per second at source
+float3 _EmitPos;         // source position in voxel coords
+float  _EmitRadius;      // source radius in voxels
+float  _RiseSpeed;       // upward advection speed in voxels/sec
+float  _NoiseStrength;   // small horizontal drift amount
+float  _Time;            // used to animate noise offset
+
+// ── simple noise helpers ───
+float hash(float3 p)
+{
+    p = frac(p * float3(127.1, 311.7, 74.7));
+    p += dot(p, p.yzx + 19.19);
+    return frac((p.x + p.y) * p.z);
+}
+
+float noise3(float3 p)
+{
+    float3 i = floor(p);
+    float3 f = frac(p);
+    f = f * f * (3.0 - 2.0 * f); // smoothstep
+
+    return lerp(
+        lerp(lerp(hash(i),              hash(i + float3(1,0,0)), f.x),
+             lerp(hash(i + float3(0,1,0)), hash(i + float3(1,1,0)), f.x), f.y),
+        lerp(lerp(hash(i + float3(0,0,1)), hash(i + float3(1,0,1)), f.x),
+             lerp(hash(i + float3(0,1,1)), hash(i + float3(1,1,1)), f.x), f.y),
+        f.z);
+}
+
+// TODO: Understand this stuff...
+// ── main kernel ───
+[numthreads(8, 8, 8)]
+void SimulateSmoke(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize)) return;
+
+    float3 uvw = (id + 0.5) / _GridSize; // [0,1] cell centre
+
+    // --- Advection (semi-Lagrangian) ---
+    // Build a simple velocity field: upward + small turbulent drift
+    float3 noisePos = float3(id) * 0.05 + float3(0, _Time * 0.3, 0);
+    float nx = (noise3(noisePos)               - 0.5) * 2.0;
+    float nz = (noise3(noisePos + float3(5,3,7)) - 0.5) * 2.0;
+
+    // velocity in voxels/sec
+    float3 velocity = float3(nx, _RiseSpeed, nz) * _NoiseStrength;
+    velocity.y = _RiseSpeed + abs(velocity.y); // always rise, noise adds to it
+
+    // trace back along velocity to find where density came from last frame
+    float3 prevUVW = uvw - (velocity / _GridSize) * _DeltaTime;
+    prevUVW = saturate(prevUVW);
+
+    float density = _Read.SampleLevel(sampler_Read, prevUVW, 0).r;
+
+    // --- Dissipation ---
+    density *= pow(_Dissipation, _DeltaTime * 60.0); // framerate-independent
+
+    // --- Emission ---
+    float distToSource = length((float3)id - _EmitPos);
+    if (distToSource < _EmitRadius)
+    {
+        float falloff = 1.0 - (distToSource / _EmitRadius);
+        falloff = falloff * falloff; // quadratic falloff
+        density += _EmitRate * _DeltaTime * falloff;
+    }
+
+    density = saturate(density);
+
+    _Write[id] = density;
+}
+

@@ -1,0 +1,23 @@
+# Unity generated
+/Library/
+/Temp/
+/Logs/
+/obj/
+/Build/
+/Builds/
+
+# Generated project files
+*.csproj
+*.sln
+*.slnx
+
+# Visual Studio / Rider
+.vs/
+.idea/
+
+# User-specific editor settings (optional — remove if you want to share layouts)
+/UserSettings/
+
+# OS junk
+.DS_Store
+Thumbs.db
