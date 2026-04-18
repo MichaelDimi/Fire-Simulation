@@ -1,7 +1,7 @@
 using UnityEngine;
 
 [RequireComponent(typeof(Camera))]
-[ExecuteInEditMode, ImageEffectAllowedInSceneView]
+[ImageEffectAllowedInSceneView] //[ExecuteInEditMode]
 public class GridVolumeRenderer : MonoBehaviour
 {
     const string headerDecoration = " --- ";

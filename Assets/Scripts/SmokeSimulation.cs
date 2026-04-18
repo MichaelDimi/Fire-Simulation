@@ -11,29 +11,37 @@ public class SmokeSimulation : MonoBehaviour
     public float emitRadius = 3f;    // in voxels
     public float emitRate = 5f;    // density units/sec
 
-    [Header("Simulation")]
+    [Header("Density")]
     [Range(0.9f, 1f)] public float dissipation = 0.98f;
-    [Range(1f, 30f)] public float riseSpeed = 8f;     // voxels/sec
-    [Range(0f, 2f)] public float noiseStrength = 1f;
+
+    [Header("Velocity Field")]
+    [Range(1f, 1000f)] public float buoyancyStrength = 10f; // how hard density pushes fluid upward (voxels/sec)
+    [Range(0.9f, 1f)] public float velocityDissipation = 0.995f; // velocity drag — lower = more viscous
+    [Range(0f, 100f)] public float noiseStrength = 0.3f; // Seed turbulence near emitter
 
     // public read-only access for the renderer
-    public RenderTexture ActiveTexture => _read;
+    public RenderTexture ActiveTexture => _densityRead;
 
     // internals
-    RenderTexture _read;
-    RenderTexture _write;
-    int _kernel;
+    RenderTexture _densityRead, _densityWrite;
+    RenderTexture _velocityRead, _velocityWrite;
+
+    int _kernelAdvectVelocity;
+    int _kernelAdvectDensity;
 
     void OnEnable()
     {
         InitTextures();
-        _kernel = computeShader.FindKernel("SimulateSmoke");
+        _kernelAdvectVelocity = computeShader.FindKernel("AdvectVelocity");
+        _kernelAdvectDensity = computeShader.FindKernel("AdvectDensity");
     }
 
     void OnDisable()
     {
-        _read?.Release();
-        _write?.Release();
+        _densityRead?.Release();
+        _densityWrite?.Release();
+        _velocityRead?.Release();
+        _velocityWrite?.Release();
     }
 
     void Update()
@@ -44,47 +52,64 @@ public class SmokeSimulation : MonoBehaviour
 
     void Step(float dt)
     {
+        int groups = Mathf.CeilToInt(resolution / 8f);
         Vector3 gridSize = new Vector3(resolution, resolution, resolution);
-        Vector3 emitPosVoxel = emitPositionNormalized * (resolution - 1);
+        Vector3 emitPosVox = emitPositionNormalized * (resolution - 1);
 
-        computeShader.SetTexture(_kernel, "_Read", _read);
-        computeShader.SetTexture(_kernel, "_Write", _write);
+        // Shared params (both kernels need these)
         computeShader.SetVector("_GridSize", gridSize);
         computeShader.SetFloat("_DeltaTime", dt);
+        computeShader.SetFloat("_Time", Time.time);
+        computeShader.SetVector("_EmitPos", emitPosVox);
+        computeShader.SetFloat("_EmitRadius", emitRadius);
+
+        // ── Kernel 1: Advect Velocity ────────────────────────────────────────
+        computeShader.SetTexture(_kernelAdvectVelocity, "_VelocityRead", _velocityRead);
+        computeShader.SetTexture(_kernelAdvectVelocity, "_VelocityWrite", _velocityWrite);
+        computeShader.SetTexture(_kernelAdvectVelocity, "_DensityRead", _densityRead);
+        computeShader.SetFloat("_BuoyancyStrength", buoyancyStrength);
+        computeShader.SetFloat("_VelocityDissipation", velocityDissipation);
+        computeShader.SetFloat("_NoiseStrength", noiseStrength);
+
+        computeShader.Dispatch(_kernelAdvectVelocity, groups, groups, groups);
+        SwapTextures(ref _velocityRead, ref _velocityWrite);
+
+        // ── Kernel 2: Advect Density ─────────────────────────────────────────
+        computeShader.SetTexture(_kernelAdvectDensity, "_VelocityRead", _velocityRead);
+        computeShader.SetTexture(_kernelAdvectDensity, "_DensityRead", _densityRead);
+        computeShader.SetTexture(_kernelAdvectDensity, "_DensityWrite", _densityWrite);
         computeShader.SetFloat("_Dissipation", dissipation);
         computeShader.SetFloat("_EmitRate", emitRate);
-        computeShader.SetVector("_EmitPos", emitPosVoxel);
-        computeShader.SetFloat("_EmitRadius", emitRadius);
-        computeShader.SetFloat("_RiseSpeed", riseSpeed);
-        computeShader.SetFloat("_NoiseStrength", noiseStrength);
-        computeShader.SetFloat("_Time", Time.time);
 
-        int groups = Mathf.CeilToInt(resolution / 8f);
-        computeShader.Dispatch(_kernel, groups, groups, groups);
-
-        // Swap
-        (_write, _read) = (_read, _write);
+        computeShader.Dispatch(_kernelAdvectDensity, groups, groups, groups);
+        SwapTextures(ref _densityRead, ref _densityWrite);
     }
 
     void InitTextures()
     {
-        _read = CreateVolumeRT(resolution);
-        _write = CreateVolumeRT(resolution);
+        _densityRead = CreateVolumeRT(resolution, RenderTextureFormat.RFloat);
+        _densityWrite = CreateVolumeRT(resolution, RenderTextureFormat.RFloat);
+        _velocityRead = CreateVolumeRT(resolution, RenderTextureFormat.ARGBFloat);
+        _velocityWrite = CreateVolumeRT(resolution, RenderTextureFormat.ARGBFloat);
     }
 
-    static RenderTexture CreateVolumeRT(int res)
+    static RenderTexture CreateVolumeRT(int res, RenderTextureFormat format)
     {
-        var rt = new RenderTexture(res, res, 0, RenderTextureFormat.RFloat)
+        var rt = new RenderTexture(res, res, 0, format)
         {
             dimension = UnityEngine.Rendering.TextureDimension.Tex3D,
             volumeDepth = res,
             enableRandomWrite = true,
             wrapMode = TextureWrapMode.Clamp,
             filterMode = FilterMode.Bilinear,
+
         };
         rt.Create();
         return rt;
     }
 
-
+    static void SwapTextures(ref RenderTexture a, ref RenderTexture b)
+    {
+        (b, a) = (a, b);
+    }
 }
