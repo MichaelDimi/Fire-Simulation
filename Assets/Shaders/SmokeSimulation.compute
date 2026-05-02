@@ -1,60 +1,141 @@
 // ============================================================
 //  SmokeSimulation.compute
-//  Two kernels run each frame, in order:
-//    1. AdvectVelocity  – moves the velocity field along itself
-//                         and applies buoyancy
-//    2. AdvectDensity   – moves density along the velocity field,
-//                         emits new density, dissipates
+//  The fluid step is split into:
+//    1. AdvectVelocity       - semi-Lagrangian velocity advection + buoyancy
+//    2. VorticityConfinement - adds rotational energy back into the flow
+//    3. ComputeDivergence    - measures how non-incompressible the field is
+//    4. JacobiPressure       - solves for a scalar pressure field
+//    5. ProjectVelocity      - subtracts pressure gradient from velocity
+//    6. AdvectFuel           - moves fuel through the cleaned flow
+//    7. AdvectDensity        - moves smoke density through the cleaned flow
+//    8. AdvectTemperature    - moves heat through the cleaned flow
+//    9. AdvectReaction       - moves the short-lived burn field
+//   10. Combustion           - converts burned fuel into heat, smoke, and flame
+//   11. OpenTopOutflow       - vents plume at the top boundary to prevent recirculation
 // ============================================================
 
-// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel AdvectVelocity
+#pragma kernel VorticityConfinement
+#pragma kernel ComputeDivergence
+#pragma kernel ClearPressure
+#pragma kernel JacobiPressure
+#pragma kernel ProjectVelocity
+#pragma kernel AdvectFuel
 #pragma kernel AdvectDensity
+#pragma kernel AdvectTemperature
+#pragma kernel AdvectReaction
+#pragma kernel Combustion
+#pragma kernel OpenTopOutflow
 
-// ── ping-pong density ────────────────────────────────────────
-RWTexture3D<float>  _DensityWrite;
-Texture3D<float>    _DensityRead;
+RWTexture3D<float> _FuelWrite;
+Texture3D<float> _FuelRead;
 
-// ── ping-pong velocity (xyz stored in rgb) ───────────────────
+RWTexture3D<float> _DensityWrite;
+Texture3D<float> _DensityRead;
+
+RWTexture3D<float> _TemperatureWrite;
+Texture3D<float> _TemperatureRead;
+
+RWTexture3D<float> _ReactionWrite;
+Texture3D<float> _ReactionRead;
+
 RWTexture3D<float4> _VelocityWrite;
-Texture3D<float4>   _VelocityRead;
+Texture3D<float4> _VelocityRead;
 
-SamplerState        sampler_DensityRead;
-SamplerState        sampler_VelocityRead;
+RWTexture3D<float> _DivergenceWrite;
+Texture3D<float> _DivergenceRead;
 
-// ── uniforms ─────────────────────────────────────────────────
-float3 _GridSize;        // voxel dimensions (e.g. 64,64,64)
-float  _DeltaTime;
-float  _Time;            // used to animate noise offset
+RWTexture3D<float> _PressureWrite;
+Texture3D<float> _PressureRead;
 
-// Density
-float  _Dissipation;     // how fast density fades (0.99 = slow, 0.95 = fast)
-float  _EmitRate;        // density injected per second at source
-float3 _EmitPos;         // source position in voxel coords
-float  _EmitRadius;      // source radius in voxels
+SamplerState sampler_DensityRead;
+SamplerState sampler_TemperatureRead;
+SamplerState sampler_FuelRead;
+SamplerState sampler_ReactionRead;
+SamplerState sampler_VelocityRead;
+SamplerState sampler_DivergenceRead;
+SamplerState sampler_PressureRead;
 
-// Velocity
-float  _BuoyancyStrength;    // how hard density pushes fluid upward (voxels/sec)
-float  _VelocityDissipation; // velocity drag — lower = more viscous
-float  _NoiseStrength;
+float3 _GridSize;
+float _DeltaTime;
+float _Time;
 
-// ── helpers ──────────────────────────────────────────────────
+float _FuelDissipation;
+float _FuelEmitRate;
+float _Dissipation;
+
+float _TemperatureDissipation;
+float _TemperatureEmitRate;
+float _TemperatureMax;
+float _ReactionDissipation;
+
+float _IgnitionTemperature;
+float _BurnRate;
+float _HeatRelease;
+float _SmokeYield;
+float _SmokeEnabled;
+float _ReactionGain;
+float _SmokeClearTemperature;
+float _SmokeSuppressionRange;
+float _SmokeOxidationRate;
+float _PostCombustionSmokeRate;
+
+float3 _EmitPos;
+float _EmitRadius;
+float _EmitThickness;
+
+float _BuoyancyStrength;
+float _VelocityDissipation;
+float _NoiseStrength;
+float _VorticityStrength;
 
 float3 SampleVelocity(float3 voxelPos)
 {
-    float3 uvw = (voxelPos + 0.5) / _GridSize;
-    uvw = saturate(uvw);
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
     return _VelocityRead.SampleLevel(sampler_VelocityRead, uvw, 0).xyz;
 }
 
 float SampleDensity(float3 voxelPos)
 {
-    float3 uvw = (voxelPos + 0.5) / _GridSize;
-    uvw = saturate(uvw);
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
     return _DensityRead.SampleLevel(sampler_DensityRead, uvw, 0).r;
 }
 
-// ── simple noise helpers ───
+float SampleFuel(float3 voxelPos)
+{
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
+    return _FuelRead.SampleLevel(sampler_FuelRead, uvw, 0).r;
+}
+
+float SampleTemperature(float3 voxelPos)
+{
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
+    return _TemperatureRead.SampleLevel(sampler_TemperatureRead, uvw, 0).r;
+}
+
+float SampleReaction(float3 voxelPos)
+{
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
+    return _ReactionRead.SampleLevel(sampler_ReactionRead, uvw, 0).r;
+}
+
+float SampleDivergence(float3 voxelPos)
+{
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
+    return _DivergenceRead.SampleLevel(sampler_DivergenceRead, uvw, 0).r;
+}
+
+float SamplePressure(float3 voxelPos)
+{
+    float3 uvw = saturate((voxelPos + 0.5) / _GridSize);
+    return _PressureRead.SampleLevel(sampler_PressureRead, uvw, 0).r;
+}
+
+float remap01(float v, float low, float high)
+{
+    return (v - low) / max(high - low, 1e-5);
+}
+
 float hash(float3 p)
 {
     p = frac(p * float3(127.1, 311.7, 74.7));
@@ -66,81 +147,321 @@ float noise3(float3 p)
 {
     float3 i = floor(p);
     float3 f = frac(p);
-    f = f * f * (3.0 - 2.0 * f); // smoothstep
+    f = f * f * (3.0 - 2.0 * f);
 
     return lerp(
-        lerp(lerp(hash(i),                 hash(i + float3(1,0,0)), f.x),
-             lerp(hash(i + float3(0,1,0)), hash(i + float3(1,1,0)), f.x), f.y),
-        lerp(lerp(hash(i + float3(0,0,1)), hash(i + float3(1,0,1)), f.x),
-             lerp(hash(i + float3(0,1,1)), hash(i + float3(1,1,1)), f.x), f.y),
+        lerp(lerp(hash(i), hash(i + float3(1, 0, 0)), f.x),
+             lerp(hash(i + float3(0, 1, 0)), hash(i + float3(1, 1, 0)), f.x), f.y),
+        lerp(lerp(hash(i + float3(0, 0, 1)), hash(i + float3(1, 0, 1)), f.x),
+             lerp(hash(i + float3(0, 1, 1)), hash(i + float3(1, 1, 1)), f.x), f.y),
         f.z);
 }
 
 float3 SeedNoise(uint3 id)
 {
     float3 p = float3(id) * 0.18 + float3(0, _Time * 0.5, 0);
-    float nx = (noise3(p)                        - 0.5) * 2.0;
-    float ny = (noise3(p + float3(3.1, 0,   7.4)) - 0.5) * 2.0;
-    float nz = (noise3(p + float3(1.7, 5.2, 0  )) - 0.5) * 2.0;
+    float nx = (noise3(p) - 0.5) * 2.0;
+    float ny = (noise3(p + float3(3.1, 0, 7.4)) - 0.5) * 2.0;
+    float nz = (noise3(p + float3(1.7, 5.2, 0.0)) - 0.5) * 2.0;
     return float3(nx, ny, nz) * _NoiseStrength;
 }
 
-// ── Kernels ───
+float EmitterFalloff(float3 voxelPos)
+{
+    if (_EmitRadius <= 0.0 || _EmitThickness <= 0.0)
+        return 0.0;
 
-// Must match the thread groups in SmokeSimulation.cs
-// Each work chunk is 8x8x8
-// - extras that don't divide cleanly are removed
+    float2 radialOffset = voxelPos.xz - _EmitPos.xz;
+    float radialDist = length(radialOffset);
+    if (radialDist >= _EmitRadius)
+        return 0.0;
 
-// ── Kernel 1: Advect Velocity ─────────────────────────────────
+    float heightAboveSource = voxelPos.y - _EmitPos.y;
+    if (heightAboveSource < 0.0 || heightAboveSource >= _EmitThickness)
+        return 0.0;
+
+    float radialFalloff = 1.0 - (radialDist / _EmitRadius);
+    float verticalFalloff = 1.0 - (heightAboveSource / _EmitThickness);
+    return radialFalloff * radialFalloff * verticalFalloff;
+}
+
+float3 CurlAt(float3 voxelPos)
+{
+    float3 velL = SampleVelocity(voxelPos - float3(1, 0, 0));
+    float3 velR = SampleVelocity(voxelPos + float3(1, 0, 0));
+    float3 velD = SampleVelocity(voxelPos - float3(0, 1, 0));
+    float3 velU = SampleVelocity(voxelPos + float3(0, 1, 0));
+    float3 velB = SampleVelocity(voxelPos - float3(0, 0, 1));
+    float3 velF = SampleVelocity(voxelPos + float3(0, 0, 1));
+
+    float dWdy = (velU.z - velD.z) * 0.5;
+    float dVdz = (velF.y - velB.y) * 0.5;
+    float dUdz = (velF.x - velB.x) * 0.5;
+    float dWdx = (velR.z - velL.z) * 0.5;
+    float dVdx = (velR.y - velL.y) * 0.5;
+    float dUdy = (velU.x - velD.x) * 0.5;
+
+    return float3(
+        dWdy - dVdz,
+        dUdz - dWdx,
+        dVdx - dUdy
+    );
+}
+
 [numthreads(8, 8, 8)]
 void AdvectVelocity(uint3 id : SV_DispatchThreadID)
 {
-    if (any(id >= (uint3)_GridSize)) return;
+    if (any(id >= (uint3)_GridSize))
+        return;
 
-    // Semi-Lagrangian: trace back along current velocity
-    float3 vel      = SampleVelocity(float3(id));
-    float3 prevPos  = float3(id) - vel * _DeltaTime;
+    float3 vel = SampleVelocity(float3(id));
+    float3 prevPos = float3(id) - vel * _DeltaTime;
     float3 advected = SampleVelocity(prevPos);
 
-    // Buoyancy: density pushes upward (so sample from below)
-    float  density  = SampleDensity(float3(id) - float3(0, 1, 0));
-    float3 buoyancy = float3(0, density * _BuoyancyStrength, 0);
+    float temperature = SampleTemperature(float3(id) - float3(0, 1, 0));
+    float3 buoyancy = float3(0, temperature * _BuoyancyStrength, 0);
 
     float3 newVel = advected + buoyancy * _DeltaTime;
 
-    // Seed noise near the emitter to start turbulence
+    float minGridDim = min(_GridSize.x, min(_GridSize.y, _GridSize.z));
+    float maxNoiseRadius = max(4.0, minGridDim * 0.18);
+    float turbulenceRadius = min(_EmitRadius * 2.0, maxNoiseRadius);
     float distToEmit = length(float3(id) - _EmitPos);
-    if (distToEmit < _EmitRadius * 2.0)
+    if (distToEmit < turbulenceRadius)
         newVel += SeedNoise(id) * _DeltaTime;
 
-    // Damping
     newVel *= pow(_VelocityDissipation, _DeltaTime * 60.0);
-
     _VelocityWrite[id] = float4(newVel, 0);
 }
 
-// ── Kernel 2: Advect Density ──────────────────────────────────
+[numthreads(8, 8, 8)]
+void VorticityConfinement(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 voxelPos = float3(id);
+    float3 curl = CurlAt(voxelPos);
+
+    float3 gradCurlMag = float3(
+        length(CurlAt(voxelPos + float3(1, 0, 0))) - length(CurlAt(voxelPos - float3(1, 0, 0))),
+        length(CurlAt(voxelPos + float3(0, 1, 0))) - length(CurlAt(voxelPos - float3(0, 1, 0))),
+        length(CurlAt(voxelPos + float3(0, 0, 1))) - length(CurlAt(voxelPos - float3(0, 0, 1)))
+    ) * 0.5;
+
+    float gradLength = length(gradCurlMag);
+    float3 normal = gradLength > 1e-5 ? gradCurlMag / gradLength : 0;
+    float3 confinementForce = cross(normal, curl) * _VorticityStrength;
+
+    float3 velocity = SampleVelocity(voxelPos) + confinementForce * _DeltaTime;
+    _VelocityWrite[id] = float4(velocity, 0);
+}
+
+[numthreads(8, 8, 8)]
+void ComputeDivergence(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 voxelPos = float3(id);
+    float3 velL = SampleVelocity(voxelPos - float3(1, 0, 0));
+    float3 velR = SampleVelocity(voxelPos + float3(1, 0, 0));
+    float3 velD = SampleVelocity(voxelPos - float3(0, 1, 0));
+    float3 velU = SampleVelocity(voxelPos + float3(0, 1, 0));
+    float3 velB = SampleVelocity(voxelPos - float3(0, 0, 1));
+    float3 velF = SampleVelocity(voxelPos + float3(0, 0, 1));
+
+    float divergence =
+        (velR.x - velL.x +
+         velU.y - velD.y +
+         velF.z - velB.z) * 0.5;
+
+    _DivergenceWrite[id] = divergence;
+}
+
+[numthreads(8, 8, 8)]
+void ClearPressure(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    _PressureWrite[id] = 0.0;
+}
+
+[numthreads(8, 8, 8)]
+void JacobiPressure(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 voxelPos = float3(id);
+    float pressureL = SamplePressure(voxelPos - float3(1, 0, 0));
+    float pressureR = SamplePressure(voxelPos + float3(1, 0, 0));
+    float pressureD = SamplePressure(voxelPos - float3(0, 1, 0));
+    float pressureU = SamplePressure(voxelPos + float3(0, 1, 0));
+    float pressureB = SamplePressure(voxelPos - float3(0, 0, 1));
+    float pressureF = SamplePressure(voxelPos + float3(0, 0, 1));
+    float divergence = SampleDivergence(voxelPos);
+
+    float pressure = (
+        pressureL + pressureR +
+        pressureD + pressureU +
+        pressureB + pressureF -
+        divergence) / 6.0;
+
+    _PressureWrite[id] = pressure;
+}
+
+[numthreads(8, 8, 8)]
+void ProjectVelocity(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 voxelPos = float3(id);
+    float pressureL = SamplePressure(voxelPos - float3(1, 0, 0));
+    float pressureR = SamplePressure(voxelPos + float3(1, 0, 0));
+    float pressureD = SamplePressure(voxelPos - float3(0, 1, 0));
+    float pressureU = SamplePressure(voxelPos + float3(0, 1, 0));
+    float pressureB = SamplePressure(voxelPos - float3(0, 0, 1));
+    float pressureF = SamplePressure(voxelPos + float3(0, 0, 1));
+
+    float3 pressureGradient = float3(
+        pressureR - pressureL,
+        pressureU - pressureD,
+        pressureF - pressureB
+    ) * 0.5;
+
+    float3 velocity = SampleVelocity(voxelPos) - pressureGradient;
+    _VelocityWrite[id] = float4(velocity, 0);
+}
+
+[numthreads(8, 8, 8)]
+void AdvectFuel(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 vel = SampleVelocity(float3(id));
+    float3 prevPos = float3(id) - vel * _DeltaTime;
+    float fuel = SampleFuel(prevPos);
+
+    fuel *= pow(_FuelDissipation, _DeltaTime * 60.0);
+    fuel += _FuelEmitRate * _DeltaTime * EmitterFalloff(float3(id));
+
+    _FuelWrite[id] = saturate(fuel);
+}
+
 [numthreads(8, 8, 8)]
 void AdvectDensity(uint3 id : SV_DispatchThreadID)
 {
-    if (any(id >= (uint3)_GridSize)) return;
+    if (any(id >= (uint3)_GridSize))
+        return;
 
-    // Semi-Lagrangian: trace back along velocity to find source density
-    float3 vel     = SampleVelocity(float3(id));
+    float3 vel = SampleVelocity(float3(id));
     float3 prevPos = float3(id) - vel * _DeltaTime;
-    float  density = SampleDensity(prevPos);
+    float density = SampleDensity(prevPos);
 
-    // Dissipation
     density *= pow(_Dissipation, _DeltaTime * 60.0);
-
-    // Emission
-    float distToSource = length(float3(id) - _EmitPos);
-    if (distToSource < _EmitRadius)
-    {
-        float falloff = 1.0 - (distToSource / _EmitRadius);
-        density += _EmitRate * _DeltaTime * (falloff * falloff);
-    }
 
     _DensityWrite[id] = saturate(density);
 }
 
+[numthreads(8, 8, 8)]
+void AdvectTemperature(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 vel = SampleVelocity(float3(id));
+    float3 prevPos = float3(id) - vel * _DeltaTime;
+    float temperature = SampleTemperature(prevPos);
+
+    temperature *= pow(_TemperatureDissipation, _DeltaTime * 60.0);
+    temperature += _TemperatureEmitRate * _DeltaTime * EmitterFalloff(float3(id));
+
+    _TemperatureWrite[id] = clamp(temperature, 0.0, _TemperatureMax);
+}
+
+[numthreads(8, 8, 8)]
+void AdvectReaction(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 vel = SampleVelocity(float3(id));
+    float3 prevPos = float3(id) - vel * _DeltaTime;
+    float reaction = SampleReaction(prevPos);
+
+    reaction *= pow(_ReactionDissipation, _DeltaTime * 60.0);
+    _ReactionWrite[id] = saturate(reaction);
+}
+
+[numthreads(8, 8, 8)]
+void Combustion(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float3 voxelPos = float3(id);
+    float fuel = SampleFuel(voxelPos);
+    float density = SampleDensity(voxelPos);
+    float temperature = SampleTemperature(voxelPos);
+    float reaction = SampleReaction(voxelPos);
+
+    float ignition = saturate(remap01(temperature, _IgnitionTemperature, 1.0));
+    float sourceMask = EmitterFalloff(voxelPos);
+    ignition = max(ignition, sourceMask);
+    float burn = min(fuel, fuel * ignition * _BurnRate * _DeltaTime);
+    float hotness = saturate(remap01(temperature, _SmokeClearTemperature, _SmokeClearTemperature + _SmokeSuppressionRange));
+    float coolness = 1.0 - hotness;
+
+    float directSmoke = burn * _SmokeYield * coolness * _SmokeEnabled;
+    float postCombustionSmoke = reaction * coolness * _PostCombustionSmokeRate * _DeltaTime * _SmokeEnabled;
+    float smokeOxidation = density * hotness * _SmokeOxidationRate * _DeltaTime * _SmokeEnabled;
+
+    fuel = max(0.0, fuel - burn);
+    temperature = clamp(temperature + burn * _HeatRelease, 0.0, _TemperatureMax);
+    density = _SmokeEnabled > 0.5 ? saturate(density + directSmoke + postCombustionSmoke - smokeOxidation) : 0.0;
+    reaction = saturate(reaction + burn * _ReactionGain - postCombustionSmoke);
+
+    // Keep a small pilot zone at the source so turbulence does not permanently blow out the flame.
+    temperature = max(temperature, (_IgnitionTemperature + 0.08) * sourceMask);
+    reaction = max(reaction, 0.12 * sourceMask);
+
+    _FuelWrite[id] = fuel;
+    _DensityWrite[id] = density;
+    _TemperatureWrite[id] = temperature;
+    _ReactionWrite[id] = reaction;
+}
+
+[numthreads(8, 8, 8)]
+void OpenTopOutflow(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint3)_GridSize))
+        return;
+
+    float density = SampleDensity(float3(id));
+    float fuel = SampleFuel(float3(id));
+    float temperature = SampleTemperature(float3(id));
+    float reaction = SampleReaction(float3(id));
+    float3 velocity = SampleVelocity(float3(id));
+
+    int gridTop = (int)_GridSize.y - 1;
+    if ((int)id.y == gridTop)
+    {
+        density *= 0.25;
+        fuel *= 0.05;
+        reaction *= 0.10;
+        temperature *= 0.55;
+
+        velocity.y = max(0.0, velocity.y) * 0.90;
+        velocity.xz *= 0.72;
+    }
+
+    _DensityWrite[id] = density;
+    _FuelWrite[id] = fuel;
+    _TemperatureWrite[id] = temperature;
+    _ReactionWrite[id] = reaction;
+    _VelocityWrite[id] = float4(velocity, 0);
+}

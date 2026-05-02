@@ -245,6 +245,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7e072a058d5b540fba1bc7eb621fe57d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::VolumetricGrid
+  resolution: 8
 --- !u!114 &775539070
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -257,15 +258,35 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f0c6109408ea247f4b058a10c30c869e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SmokeSimulation
+  enableSmoke: 1
   computeShader: {fileID: 7200000, guid: b1bccb16bbcbe473385ecb04bda8fa77, type: 3}
-  resolution: 64
-  emitPositionNormalized: {x: 0.5, y: 0.05, z: 0.5}
-  emitRadius: 3
-  emitRate: 5
-  dissipation: 0.98
-  buoyancyStrength: 10
+  resolution: 128
+  emitPositionNormalized: {x: 0.5, y: 0.01, z: 0.5}
+  emitRadius: 20
+  emitThickness: 2
+  dissipation: 0.992
+  temperatureDissipation: 0.99
+  temperatureEmitRate: 5.5
+  temperatureMax: 100
+  fuelDissipation: 0.99
+  fuelEmitRate: 100
+  ignitionTemperature: 0.567
+  burnRate: 5.5
+  heatRelease: 1.27
+  smokeYield: 0.13
+  reactionDissipation: 0.927
+  reactionGain: 9
+  smokeClearTemperature: 0.185
+  smokeSuppressionRange: 0.432
+  smokeOxidationRate: 0.7
+  postCombustionSmokeRate: 5.9
+  buoyancyStrength: 13
   velocityDissipation: 0.995
-  noiseStrength: 0.3
+  noiseStrength: 0.4
+  vorticityStrength: 3.9
+  pressureIterations: 24
+  maxSimulationSubsteps: 6
+  maxSimulationStep: 0.033333335
 --- !u!1 &963194225
 GameObject:
   m_ObjectHideFlags: 0
@@ -278,6 +299,8 @@ GameObject:
   - component: {fileID: 963194227}
   - component: {fileID: 963194226}
   - component: {fileID: 963194229}
+  - component: {fileID: 963194230}
+  - component: {fileID: 963194231}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -303,7 +326,7 @@ Camera:
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 2
-  m_BackGroundColor: {r: 1, g: 1, b: 1, a: 0}
+  m_BackGroundColor: {r: 0, g: 0, b: 0, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -352,14 +375,58 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 963194225}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.15768285, y: -0.24953204, z: 0.041220278, w: 0.95455265}
-  m_LocalPosition: {x: 66.9, y: 36.8, z: -111.4}
+  m_LocalRotation: {x: 0.1170692, y: -0.25105536, z: 0.030603359, w: 0.9603799}
+  m_LocalPosition: {x: 61.79, y: 23.77, z: -114.85}
   m_LocalScale: {x: 2, y: 2, z: 2}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 18.76, y: -29.3, z: 0}
+  m_LocalEulerAnglesHint: {x: 13.9, y: -29.3, z: 0}
 --- !u!114 &963194229
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 51b296de2baca4844896b790d52a6d11, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GridVolumeRenderer
+  fireShader: {fileID: 4800000, guid: 3e0ed1d0b2d344188a5b7bf1eecf2b52, type: 3}
+  smokeShader: {fileID: 4800000, guid: 6c2d2647a788546e384e6d2c5a62720e, type: 3}
+  grid: {fileID: 775539069}
+  simulation: {fileID: 775539070}
+  lightSource: {fileID: 2064746758}
+  fireEmissionStrength: 8.34
+  fireTemperatureThreshold: 0.255
+  fireTemperatureMax: 2.5
+  fireOpacity: 0.8
+  fireStepSize: 0.1
+  fireColorMidPoint: 0.509
+  fireColorHighPoint: 0.805
+  fireDetailScale: 9.94
+  fireDetailStrength: 0.6
+  fireFlickerSpeed: 5.22
+  fireColorLow: {r: 0.7075472, g: 0.022410996, b: 0, a: 1}
+  fireColorMid: {r: 0.9433962, g: 0.39095134, b: 0.07564971, a: 1}
+  fireColorHigh: {r: 1, g: 1, b: 1, a: 1}
+  densityMultiplier: 0.78
+  smokeStepSize: 0.1
+  numStepsLight: 16
+  lightAbsorptionThroughCloud: 4.3
+  lightAbsorptionTowardSun: 4.43
+  darknessThreshold: 0.015
+  forwardScattering: 0.83
+  backScattering: 0.3
+  baseBrightness: 0.2
+  phaseFactor: 0.08
+  numStepsFireLight: 10
+  fireLightStrength: 0.89
+  fireLightRange: 6.3
+  fireLightAbsorption: 3.31
+--- !u!114 &963194230
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -368,55 +435,171 @@ MonoBehaviour:
   m_GameObject: {fileID: 963194225}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 51b296de2baca4844896b790d52a6d11, type: 3}
+  m_Script: {fileID: 11500000, guid: 17a2011eb4b2b446ea159f542ee41d66, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GridVolumeRenderer
-  shader: {fileID: 4800000, guid: 6c2d2647a788546e384e6d2c5a62720e, type: 3}
-  grid: {fileID: 775539069}
-  simulation: {fileID: 775539070}
-  lightSource: {fileID: 2064746758}
-  numStepsLight: 8
-  densityMultiplier: 1
-  lightAbsorptionThroughCloud: 8
-  lightAbsorptionTowardSun: 0.8
-  darknessThreshold: 0.2
-  forwardScattering: 0.83
-  backScattering: 0.3
-  baseBrightness: 0.8
-  phaseFactor: 0.15
-  material: {fileID: 2026054510}
---- !u!21 &2026054510
-Material:
-  serializedVersion: 8
+  m_EditorClassIdentifier: Assembly-CSharp::OfflineFrameExporter
+  autoStartOnPlay: 0
+  toggleCaptureKey: 290
+  captureFrameRate: 30
+  captureDurationSeconds: 30
+  screenshotSuperSize: 1
+  outputFolderName: Captures
+  clipName: fire_demo
+  encodeMp4AfterCapture: 1
+  ffmpegExecutable: ffmpeg
+  mp4Crf: 18
+  mp4Preset: medium
+  keepPngFramesAfterEncoding: 1
+  simulation: {fileID: 0}
+  overrideSimulationQuality: 1
+  captureMaxSimulationSubsteps: 10
+  capturePressureIterations: 40
+--- !u!114 &963194231
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Hidden/Volumetrics/VolumeRenderer
-  m_Shader: {fileID: 4800000, guid: 6c2d2647a788546e384e6d2c5a62720e, type: 3}
-  m_Parent: {fileID: 0}
-  m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
-  m_InvalidKeywords: []
-  m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
-  m_DoubleSidedGI: 0
-  m_CustomRenderQueue: -1
-  stringTagMap: {}
-  disabledShaderPasses: []
-  m_LockedProperties: 
-  m_SavedProperties:
-    serializedVersion: 3
-    m_TexEnvs:
-    - _MainTex:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    m_Ints: []
-    m_Floats: []
-    m_Colors: []
-  m_BuildTextureStacks: []
-  m_AllowLocking: 1
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6e1cbf60d408e46c1b4116a31a05414c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SphereVolumeRenderer
+  volumetricShader: {fileID: 4800000, guid: 65ce33caa7d7b4c79b3ffdf1af508f84, type: 3}
+  sphere: {fileID: 1239390129}
+  lightSource: {fileID: 2064746758}
+  stepSize: 0.2
+--- !u!1 &1239390124
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1239390128}
+  - component: {fileID: 1239390127}
+  - component: {fileID: 1239390126}
+  - component: {fileID: 1239390125}
+  - component: {fileID: 1239390129}
+  m_Layer: 0
+  m_Name: Sphere
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!135 &1239390125
+SphereCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1239390124}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Radius: 0.5
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!23 &1239390126
+MeshRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1239390124}
+  m_Enabled: 0
+  m_CastShadows: 1
+  m_ReceiveShadows: 1
+  m_DynamicOccludee: 1
+  m_StaticShadowCaster: 0
+  m_MotionVectors: 1
+  m_LightProbeUsage: 1
+  m_ReflectionProbeUsage: 1
+  m_RayTracingMode: 2
+  m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
+  m_SmallMeshCulling: 1
+  m_ForceMeshLod: -1
+  m_MeshLodSelectionBias: 0
+  m_RenderingLayerMask: 1
+  m_RendererPriority: 0
+  m_Materials:
+  - {fileID: 10303, guid: 0000000000000000f000000000000000, type: 0}
+  m_StaticBatchInfo:
+    firstSubMesh: 0
+    subMeshCount: 0
+  m_StaticBatchRoot: {fileID: 0}
+  m_ProbeAnchor: {fileID: 0}
+  m_LightProbeVolumeOverride: {fileID: 0}
+  m_ScaleInLightmap: 1
+  m_ReceiveGI: 1
+  m_PreserveUVs: 0
+  m_IgnoreNormalsForChartDetection: 0
+  m_ImportantGI: 0
+  m_StitchLightmapSeams: 1
+  m_SelectedEditorRenderState: 3
+  m_MinimumChartSize: 4
+  m_AutoUVMaxDistance: 0.5
+  m_AutoUVMaxAngle: 89
+  m_LightmapParameters: {fileID: 0}
+  m_GlobalIlluminationMeshLod: 0
+  m_SortingLayerID: 0
+  m_SortingLayer: 0
+  m_SortingOrder: 0
+  m_MaskInteraction: 0
+  m_AdditionalVertexStreams: {fileID: 0}
+--- !u!33 &1239390127
+MeshFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1239390124}
+  m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!4 &1239390128
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1239390124}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 30.55, y: 7.81, z: -59.21}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1239390129
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1239390124}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 046e439648d1046e28ff679fe5b786f1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VolumetricSphere
+  sigmaA: 0.5
+  sigmaS: 0.5
+  density: 1
+  phaseG: 0
+  scatterColor: {r: 0.8, g: 0.1, b: 0.5, a: 1}
 --- !u!1 &2064746757
 GameObject:
   m_ObjectHideFlags: 0
@@ -521,3 +704,4 @@ SceneRoots:
   - {fileID: 963194228}
   - {fileID: 2064746759}
   - {fileID: 775539068}
+  - {fileID: 1239390128}
